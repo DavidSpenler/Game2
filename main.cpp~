@@ -1,0 +1,462 @@
+#include <iostream>
+#include <string>
+#include <vector>
+#include <map>
+#include <tuple>
+#include <random>
+
+#include <SFML/Audio.hpp>
+#include <SFML/Graphics.hpp>
+#include <SFML/Window.hpp>
+
+using namespace std;
+using namespace sf;
+
+#include "player.h"
+#include "floor.h"
+#include "tile.h"
+#include "room.h"
+
+RenderWindow window(VideoMode(600,450),"Game",(Style::Titlebar,Style::Close));
+
+Texture texture_wall;
+Texture texture_stairs;
+Texture texture_floor;
+Texture texture_door;
+
+
+tuple<vector<vector<int>>,vector<vector<vector<int>>>,int> create_layout() {
+	vector<vector<int>> rooms = {
+		{0,0,0,0},
+		{0,0,0,0},
+		{0,0,0,0},
+	};
+	vector<vector<vector<int>>> each_room;
+	int x = 0,next_x = 0;
+	int y = 0,next_y = 0;
+	int index = 1;
+	int size,real_size;
+	int n_choice;
+	vector<vector<int>> this_room;
+	vector<int> this_space;
+
+	auto get_neighbours = [&rooms](int x, int y) {
+		vector<vector<int>> neighbours;
+		vector<int> neighbour;
+		if (x+1 < 4 && rooms[y][x+1] == 0) {
+			neighbour = {y,x+1};
+			neighbours.push_back(neighbour);
+		}
+		if (x-1 > 0 && rooms[y][x-1] == 0) {
+			neighbour = {y,x-1};
+			neighbours.push_back(neighbour);
+		}
+		if (y+1 < 3 && rooms[y+1][x] == 0) {
+			neighbour = {y+1,x};
+			neighbours.push_back(neighbour);
+		}
+		if (y-1 > 0 && rooms[y-1][x] == 0) {
+			neighbour = {y-1,x};
+			neighbours.push_back(neighbour);
+		}
+		return neighbours;
+	};
+
+	auto advance_next = [&next_x,&next_y,&rooms]() {
+		while (rooms[next_y][next_x] != 0) {
+			next_x = (next_x+1)%4;
+			if (next_x == 0)
+				++next_y;
+			if (next_y > 2) 
+				break;
+		}
+	};
+
+	while (y < 3 && index < 13) {
+		this_room = {{y,x}};
+		rooms[y][x] = index;
+		size = rand()%3+1;
+		real_size = 1;
+		for (int s=1;s<size;++s) {
+			vector<vector<int>> neighbours = get_neighbours(x,y);
+			if (neighbours.size() == 0) {
+				break;
+			}
+			n_choice = rand()%neighbours.size();
+			x = neighbours[n_choice][1];
+			y = neighbours[n_choice][0];
+			this_space = {y,x};
+			this_room.push_back(this_space);
+			rooms[y][x] = index;
+			++real_size;
+		}
+		++index;
+		each_room.push_back(this_room);
+		advance_next();
+		x = next_x;
+		y = next_y;	
+	}
+	tuple<vector<vector<int>>,vector<vector<vector<int>>>,int> room_info = make_tuple(rooms,each_room,index);
+	return room_info;
+}
+
+vector<vector<int>> create_doors(vector<vector<int>> room_grid, vector<vector<vector<int>>> room_spread) {
+	vector<vector<int>> doors;
+	vector<int> connections = {1};
+	vector<int> this_door;
+	int x,y,n_doors;
+	for (int r=0;r<room_spread.size();++r) {
+		for (int s=0;s<room_spread[r].size();++s) {
+			n_doors = 0;
+			y = room_spread[r][s][0];
+			x = room_spread[r][s][1];
+			while (true)  {
+				this_door = {};
+				if (x<room_grid[0].size()-1 && find(connections.begin(), connections.end(), room_grid[y][x+1]) == connections.end()) {
+					this_door = {y,x+1,y,x};
+				}
+				else if (x>1 && find(connections.begin(), connections.end(), room_grid[y][x-1]) == connections.end()) {
+					this_door = {y,x-1,y,x};
+
+				}
+				else if (y<room_grid.size()-1 && find(connections.begin(), connections.end(), room_grid[y+1][x]) == connections.end()) {
+					this_door = {y+1,x,y,x};
+				}
+				else if (y>0 && find(connections.begin(), connections.end(), room_grid[y-1][x]) == connections.end()) {
+					this_door = {y-1,x,y,x};
+				}
+
+				if (this_door.size() != 0) {
+					doors.push_back(this_door);
+					connections.push_back(room_grid[this_door[0]][this_door[1]]);
+					++n_doors;
+				}
+				else {
+					break;
+				}
+				if (n_doors == 2) {
+					s=10;
+					break;
+				}	
+			}
+		}
+	}
+	return doors;
+}
+
+void create_rooms(vector<vector<int>> room_grid, vector<vector<vector<int>>> room_spread, vector<vector<int>> doors, int num_rooms, vector<Room>& rooms, int floor, int max_floor, vector<Room*> stair_rooms) {
+	vector<int> door1,door2;
+	Room* this_p_room;
+	Room this_room;
+	int index_offset = rooms.size();
+	for (int i=0;i<num_rooms;++i) {
+		this_room = Room();
+		rooms.push_back(this_room);
+	}
+
+	for (int y=0;y<room_grid.size();++y) {
+		for (int x=0;x<room_grid[0].size();++x) {
+			if (x+1 <room_grid[0].size()) {
+				if (room_grid[y][x+1] != room_grid[y][x]) {
+					door1 = {y,x,y,x+1};
+					door2 = {y,x+1,y,x};
+					if (find(doors.begin(),doors.end(),door1) != doors.end() || find(doors.begin(),doors.end(),door2) != doors.end()) {
+						//create edges of doorway
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,50,150,(x+1)*500-50,500*y+50,0);
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,50,150,(x+1)*500-50,500*y+300,0);
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_door,50,100,(x+1)*500-50,500*y+200,1);
+						rooms[room_grid[y][x]-1+index_offset].add_door_connection(rooms[room_grid[y][x+1]-1+index_offset]);	
+						FloatRect room_hit_box(Vector2f((x+1)*500,500*y+200),Vector2f(50,100));
+						rooms[room_grid[y][x]-1+index_offset].add_door_hit_box(room_hit_box);
+					}
+					else {
+						//create entire wall
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,50,400,(x+1)*500-50,500*y+50,0);
+					}
+				}
+			}
+			else {
+				//create entire wall
+				rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,50,400,(x+1)*500-50,500*y+50,0);
+			}
+			if (x-1 >= 0) {
+				if (room_grid[y][x-1] != room_grid[y][x]) {
+					door1 = {y,x,y,x-1};
+					door2 = {y,x-1,y,x};
+					if (find(doors.begin(),doors.end(),door1) != doors.end() || find(doors.begin(),doors.end(),door2) != doors.end()) {
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,50,150,x*500,500*y+50,0);
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,50,150,x*500,500*y+300,0);
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_door,50,100,x*500,500*y+200,1);
+						rooms[room_grid[y][x]-1+index_offset].add_door_connection(rooms[room_grid[y][x-1]-1+index_offset]);	
+						FloatRect room_hit_box(Vector2f(x*500-50,500*y+200),Vector2f(50,100));
+						rooms[room_grid[y][x]-1+index_offset].add_door_hit_box(room_hit_box);
+					}
+					else {
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,50,400,x*500,500*y+50,0);
+					}
+				}
+			}
+			else {
+				rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,50,400,x*500,500*y+50,0);
+			}
+			if (y-1 >= 0) {
+				if (room_grid[y-1][x] != room_grid[y][x]) {
+					door1 = {y-1,x,y,x};
+					door2 = {y,x,y-1,x};
+					if (find(doors.begin(),doors.end(),door1) != doors.end() || find(doors.begin(),doors.end(),door2) != doors.end()) {
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,150,50,x*500+50,500*y,0);
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,150,50,x*500+300,500*y,0);
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_door,100,50,x*500+200,500*y,1);
+						rooms[room_grid[y][x]-1+index_offset].add_door_connection(rooms[room_grid[y-1][x]-1+index_offset]);	
+						FloatRect room_hit_box(Vector2f(x*500+200,500*y-50),Vector2f(100,50));
+						rooms[room_grid[y][x]-1+index_offset].add_door_hit_box(room_hit_box);
+					}
+					else {
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,400,50,x*500+50,500*y,0);
+					}
+				}
+			}
+			else {
+				rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,400,50,x*500+50,500*y,0);
+			}
+			if (y+1 < room_grid.size()) {
+				if (room_grid[y+1][x] != room_grid[y][x]) {
+					door1 = {y+1,x,y,x};
+					door2 = {y,x,y+1,x};
+					if (find(doors.begin(),doors.end(),door1) != doors.end() || find(doors.begin(),doors.end(),door2) != doors.end()) {
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,150,50,x*500+50,500*(y+1)-50,0);
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,150,50,x*500+300,500*(y+1)-50,0);
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_door,100,50,x*500+200,500*(y+1)-50,1);
+						rooms[room_grid[y][x]-1+index_offset].add_door_connection(rooms[room_grid[y+1][x]-1+index_offset]);	
+						FloatRect room_hit_box(Vector2f(x*500+200,500*(y+1)),Vector2f(100,50));
+						rooms[room_grid[y][x]-1+index_offset].add_door_hit_box(room_hit_box);
+					}
+					else {
+						rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,400,50,x*500+50,500*(y+1)-50,0);
+					}
+				}
+			}
+			else {
+				rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,400,50,x*500+50,500*(y+1)-50,0);
+			}
+			if (x==0) {
+				if (y==0 && floor != max_floor) {
+					rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_stairs,50,50,x*500+50,500*y+50,3);
+					FloatRect stair_hit_box(Vector2f(x*500+74,500*y+74),Vector2f(2,2));
+					rooms[room_grid[y][x]-1+index_offset].add_stair_hit_box(stair_hit_box);
+					if (stair_room1 == NULL) {
+						this_p_room = &rooms[room_grid[y][x]-1+index_offset];
+						stair_room1 == this_p_room;
+					}
+					else {
+						rooms[room_grid[y][x]-1+index_offset].add_stair_connection(stair_rooms[0]);
+						this_p_room = &rooms[room_grid[y][x]-1+index_offset];
+						stair_room1->add_stair_connection(this_p_room);
+						stair_room1 == NULL;
+					}
+				}
+				else if (y+1==room_grid.size() && floor != 1) {
+					rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_stairs,50,50,x*500+50,500*(y+1)-100,3);
+					FloatRect stair_hit_box(Vector2f(x*500+26,500*(y+1)-76),Vector2f(2,2));
+					rooms[room_grid[y][x]-1+index_offset].add_stair_hit_box(stair_hit_box);
+					if (stair_rooms[1] == NULL) {
+						this_p_room = &rooms[room_grid[y][x]-1+index_offset];
+						stair_rooms[1] == this_p_room;
+					}
+					else {
+						rooms[room_grid[y][x]-1+index_offset].add_stair_connection(stair_rooms[1]);
+						this_p_room = &rooms[room_grid[y][x]-1+index_offset];
+						stair_rooms[1]->add_stair_connection(this_p_room);
+						stair_rooms[1] == NULL;
+					}
+				}
+			}
+			else if (x+1==room_grid[0].size()) {
+				if (y==0 && floor != 1) {
+					rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_stairs,50,50,(x+1)*500-100,500*y+50,3);
+					FloatRect stair_hit_box(Vector2f((x+1)*500-74,500*y+24),Vector2f(2,2));
+					rooms[room_grid[y][x]-1+index_offset].add_stair_hit_box(stair_hit_box);
+					if (stair_rooms[2] == NULL) {
+						this_p_room = &rooms[room_grid[y][x]-1+index_offset];
+						stair_rooms[2] == this_p_room;
+					}
+					else {
+						rooms[room_grid[y][x]-1+index_offset].add_stair_connection(stair_rooms[2]);
+						this_p_room = &rooms[room_grid[y][x]-1+index_offset];
+						stair_rooms[2]->add_stair_connection(this_p_room);
+						stair_rooms[2] == NULL;
+					}
+				}
+				else if (y+1==room_grid.size() && floor != max_floor) {
+					rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_stairs,50,50,(x+1)*500-100,500*(y+1)-100,3);
+					FloatRect stair_hit_box(Vector2f((x+1)*500-74,500*(y+1)-74),Vector2f(2,2));
+					rooms[room_grid[y][x]-1+index_offset].add_stair_hit_box(stair_hit_box);
+					if (stair_rooms[3] == NULL) {
+						this_p_room = &rooms[room_grid[y][x]-1+index_offset];
+						stair_rooms[3] == this_p_room;
+					}
+					else {
+						rooms[room_grid[y][x]-1+index_offset].add_stair_connection(stair_rooms[3]);
+						this_p_room = &rooms[room_grid[y][x]-1+index_offset];
+						stair_rooms[3]->add_stair_connection(this_p_room);
+						stair_rooms[3] == NULL;
+					}
+
+				}
+			}
+			rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,50,50,x*500,y*500,0);
+			rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,50,50,x*500,(y+1)*500-50,0);
+			rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,50,50,(x+1)*500-50,y*500,0);
+			rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_wall,50,50,(x+1)*500-50,(y+1)*500-50,0);
+			rooms[room_grid[y][x]-1+index_offset].make_sprite(texture_floor,500,500,x*500,y*500,2);
+		}
+	}
+}
+
+vector<Room> generate_map(int num_floors) {
+	vector<Room> rooms = {};
+	rooms.reserve(100);
+	//vector<Room*> stair_rooms = {NULL,NULL,NULL,NULL};
+	stair_room1 = NULL;
+	stair_room2 = NULL;
+	stair_room3 = NULL;
+	stair_room4 = NULL;
+
+	for (int n=0;n<num_floors;++n) {
+		tuple<vector<vector<int>>,vector<vector<vector<int>>>,int> room_info = create_layout();
+		vector<vector<int>> room_grid = get<0>(room_info);
+		vector<vector<vector<int>>> room_spread = get<1>(room_info);
+		int num_rooms = get<2>(room_info);
+		vector<vector<int>> doors = create_doors(room_grid,room_spread);
+		create_rooms(room_grid,room_spread,doors,num_rooms,rooms,n+1,num_floors,stair_rooms);
+	}
+	return rooms;
+}
+
+
+int main() {
+	texture_wall.loadFromFile("wall.png");
+	texture_door.loadFromFile("door.png");
+	texture_floor.loadFromFile("floor.png");
+	texture_stairs.loadFromFile("stairs.png");
+	
+	window.setKeyRepeatEnabled(false);
+	
+	srand(time(NULL));	
+	
+	map <int,bool> key_map = {
+		{71,false},
+		{72,false},
+		{73,false},
+		{74,false}
+	};
+
+	vector<Room> map = generate_map(3);
+	//int current_room = 0;
+	Room* current_room = &map[0];
+	/*vector<Floor> map;
+	for (int i=0;i<3;++i) {
+		Floor t_floor;
+		map.push_back(t_floor);
+	}*/
+	Player player(map,current_room);
+
+	View view(Vector2f(300,300),Vector2f(600,450));
+	//view.zoom(2.5f);
+	window.setView(view);
+
+
+	while (window.isOpen()) {
+		//view.setCenter(player.sprite.getPosition());
+		//window.setView(view);
+
+		Event event;
+
+		while (window.pollEvent(event)) {
+			if (event.type == Event::Closed) {
+				window.close();
+			}	
+			if (event.type == Event::KeyPressed && key_map.find(event.key.code) != key_map.end()) {
+				key_map[event.key.code] = true;
+				switch(event.key.code) {
+					case 71: {
+						player.set_move_x(-1);
+						break;
+					}
+					case 72: {
+						player.set_move_x(1);
+						break;
+					}
+					case 73: {
+						player.set_move_y(-1);
+						break;
+					}
+					case 74: {
+						player.set_move_y(1);
+						break;
+					}
+
+				}
+
+			}
+			if (event.type == Event::KeyReleased && key_map.find(event.key.code) != key_map.end()) {
+				key_map[event.key.code] = false;
+				switch(event.key.code) {
+					case 71: {
+						if (key_map[72])
+							player.set_move_x(1);
+						else
+							player.set_move_x(0);
+						break;
+					}
+					case 72: {
+						if (key_map[71])
+							player.set_move_x(-1);
+						else
+							player.set_move_x(0);
+						break;
+					}
+					case 73: {
+						if (key_map[74]) {
+							player.set_move_y(1);
+						}
+						else
+							player.set_move_y(0);
+						break;
+					}
+					case 74: {
+						if (key_map[73]) {
+							player.set_move_y(-1);
+						}
+						else
+							player.set_move_y(0);
+						break;
+					}
+
+				}
+			}
+		}	
+		window.clear();
+		player.move();
+		//window.draw(tiles[0].sprite);	
+		for (int f=0;f<current_room->floors.size();++f) {
+			window.draw(current_room->floors[f]);
+		}
+		for (int w=0;w<current_room->walls.size();++w) {
+			window.draw(current_room->walls[w]);
+		}
+		for (int d=0;d<current_room->doors.size();++d) {
+			window.draw(current_room->doors[d]);
+		}
+		for (int s=0;s<current_room->stairs.size();++s) {
+			window.draw(current_room->stairs[s]);
+		}
+		window.draw(player.sprite);
+		view.setCenter(player.sprite.getPosition());
+		window.setView(view);
+		window.display();
+
+	}
+
+	return 0;
+}
