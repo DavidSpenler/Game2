@@ -3,7 +3,7 @@
 using namespace std;
 using namespace sf;
 
-Door::Door(Room* a) {
+/*Door::Door(Room* a) {
 	location = a;
 	image = b;
-}
+}*/

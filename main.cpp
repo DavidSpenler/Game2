@@ -347,6 +347,8 @@ vector<Room> generate_map(int num_floors) {
 	}
 	
 	for (int i=0;i<rooms.size();++i) {
+		//added this
+		bool recur = true;
 		Room this_room = rooms[i];
 		if (rooms[i].doors.size() == 1 && rooms[i].stairs.size() == 0) {
 			bool recur = true;

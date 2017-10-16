@@ -5,7 +5,7 @@
 #include <SFML/Audio.hpp>
 #include <vector>
 
-using namespace std;
+/*using namespace std;
 using namespace sf;
 
 class Door {
@@ -19,6 +19,6 @@ class Door {
 		Room* destination;
 		Room* location;
 		int key;
-};
+};*/
 
 #endif
